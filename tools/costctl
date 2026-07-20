@@ -148,8 +148,13 @@ def pct(a, b):
 
 def cmd_nodes(pricing, nodes, pods, args):
     idx = build_nodes(pricing, nodes, pods)
-    rows, tot = [], {"cost": 0.0}
+    rows, tot, unpriced = [], {"cost": 0.0}, 0
     for name, n in sorted(idx.items()):
+        # skip nodes we can't price (no instance-type match) — e.g. a managed
+        # control-plane node. They aren't a per-node cost line you optimize.
+        if not n["known"]:
+            unpriced += 1
+            continue
         rows.append({"node": name, "type": n["type"], "capacity_type": n["captype"],
                      "cpu_pct": round(pct(n["cpu_r"], n["cpu_a"]), 1),
                      "mem_pct": round(pct(n["mem_r"], n["mem_a"]), 1),
@@ -157,7 +162,7 @@ def cmd_nodes(pricing, nodes, pods, args):
         tot["cost"] += n["cost"]
     if args.json:
         print(json.dumps({"nodes": rows, "total_monthly_usd": round(tot["cost"], 2),
-                          "node_count": len(rows)}, indent=2))
+                          "node_count": len(rows), "unpriced_nodes": unpriced}, indent=2))
         return
     print(f"{'NODE':<28} {'TYPE':<13} {'CAP':<10} {'CPU%':>6} {'MEM%':>6} {'$/MO':>9}")
     for r in rows:
@@ -165,6 +170,8 @@ def cmd_nodes(pricing, nodes, pods, args):
               f"{r['cpu_pct']:>6} {r['mem_pct']:>6} {money(r['monthly_usd']):>9}")
     print(f"{'—'*28} {'—'*13} {'—'*10} {'—'*6} {'—'*6} {'—'*9}")
     print(f"{len(rows)} nodes{'':<52}{money(tot['cost']):>9}/mo")
+    if unpriced:
+        print(f"({unpriced} unpriced node(s) hidden — no instance-type match, e.g. the control plane)")
 
 
 def cmd_waste(pricing, nodes, pods, args):

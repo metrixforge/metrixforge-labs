@@ -14,12 +14,14 @@ idle the whole time.
 
 ---
 
-You found this in ~20 minutes, on one service you already knew to look at.
+You found this in ~20 minutes — on one service you already suspected, in one cluster.
 
-**MetrixForge finds it in 30 seconds — across every workload, in every cluster.**
-It watches requests-vs-usage continuously, flags the over-provisioned deployments,
-and shows the exact right-sized number (p95 + tier-aware headroom) with the dollar
-impact — the same math you just did by hand, on your whole estate.
+**MetrixForge does the hunt for you — continuously, across every workload and cluster.**
+Connect it once (a single `helm install`). Once metrics are flowing it watches
+requests-vs-usage, automatically surfaces the over-provisioned deployments, and shows
+each one's right-sized number (p95 + tier-aware headroom) with the dollar impact — the
+same forensics you just did by hand, on your whole estate. You stop hunting; the next
+$1,400 leak is already on the dashboard, with the fix.
 
 <!-- screenshot: MetrixForge efficiency/diagnostics view (assets/finish.webp) -->
 
