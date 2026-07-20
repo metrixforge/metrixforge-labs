@@ -1,8 +1,11 @@
 # Is `checkout` really using 3.5 cores?
 
 Requests are a *reservation*, not usage. `checkout` reserves 3.5 CPU but its real
-steady-state usage is closer to **1.5 cores** (in a real cluster you'd confirm this
-with `kubectl top pods` / a p95 over the last week — here it's given).
+steady-state usage is closer to **1.5 cores**.
+
+> This lab has no metrics stack (so `kubectl top` won't work here) — in production
+> you'd read real usage from Prometheus / your metrics server / MetrixForge over a
+> p95 window. For this exercise we've given you the number.
 
 A safe request covers the p95 with headroom — call it **2 cores**. Right-size it:
 
