@@ -42,6 +42,7 @@ near("waste_pct", w["waste_pct"], 59.3)
 
 wd = run("waste", "--daemonsets")
 near("daemonset_monthly_usd", wd["daemonset_monthly_usd"], 18.9, 1.0)
+near("daemonset_pct", wd["daemonset_pct"], 5.1, 0.6)
 
 # workloads
 wl = run("workloads")["workloads"]

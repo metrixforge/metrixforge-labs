@@ -193,13 +193,15 @@ def cmd_waste(pricing, nodes, pods, args):
            "waste_pct": round(pct(total_waste, total_cost), 1)}
     if args.daemonsets:
         out["daemonset_monthly_usd"] = round(ds_waste, 2)
+        out["daemonset_pct"] = round(pct(ds_waste, total_cost), 1)
     if args.json:
         print(json.dumps(out, indent=2))
         return
     print(f"Paid-but-not-requested (idle): {money(total_waste)}/mo "
           f"({out['waste_pct']}% of {money(total_cost)}/mo total)")
     if args.daemonsets:
-        print(f"DaemonSet 'fleet tax':         {money(ds_waste)}/mo")
+        print(f"DaemonSet 'fleet tax':         {money(ds_waste)}/mo "
+              f"({out['daemonset_pct']}% of every node)")
 
 
 def cmd_workloads(pricing, nodes, pods, args):

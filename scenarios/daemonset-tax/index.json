@@ -1,0 +1,16 @@
+{
+  "title": "The Agent Army: DaemonSets Eating 18% of Every Node",
+  "description": "Per-node agents skim a fat 'fleet tax' off every node before your apps get anything. Find the greedy ones, right-size them, prove the savings.",
+  "difficulty": "Intermediate",
+  "time": "15 minutes",
+  "details": {
+    "intro": { "text": "intro.md", "background": "setup/background.sh" },
+    "steps": [
+      { "title": "Measure the fleet tax", "text": "step1.md", "verify": "verify/step1.sh" },
+      { "title": "Right-size the greedy agents", "text": "step2.md", "verify": "verify/step2.sh" },
+      { "title": "Prove the savings", "text": "step3.md", "verify": "verify/step3.sh" }
+    ],
+    "finish": { "text": "finish.md" }
+  },
+  "backend": { "imageid": "kubernetes-kubeadm-1node" }
+}
