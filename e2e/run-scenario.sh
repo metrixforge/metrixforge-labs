@@ -7,6 +7,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export COMMON_DIR="$ROOT/common"
 export SCENARIO_DIR="$ROOT/scenarios/$SLUG"
 export PATH="$ROOT/tools:$PATH"
+# self-contained setup: copy shared tools locally (no network) into a writable LAB dir,
+# mirroring how Killercoda stages the scenario's assets into /opt/lab.
+export LABS_ROOT="$ROOT"
+export LAB_DIR="$(mktemp -d)/lab"
 CLUSTER="labs-e2e"
 V="$SCENARIO_DIR/verify"
 
