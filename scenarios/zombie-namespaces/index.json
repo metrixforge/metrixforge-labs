@@ -1,0 +1,16 @@
+{
+  "title": "Zombie Namespaces: Half Your Cluster Is Dead Code",
+  "description": "Old PR previews, a sales demo, a leftover load-test — abandoned namespaces still reserve real capacity and inflate your node count. Find them by cost + age, delete them, watch the fleet shrink.",
+  "difficulty": "Intermediate",
+  "time": "15 minutes",
+  "details": {
+    "intro": { "text": "intro.md", "background": "setup/background.sh" },
+    "steps": [
+      { "title": "Cost by namespace", "text": "step1.md", "verify": "verify/step1.sh" },
+      { "title": "Delete the zombies", "text": "step2.md", "verify": "verify/step2.sh" },
+      { "title": "Shrink the fleet", "text": "step3.md", "verify": "verify/step3.sh" }
+    ],
+    "finish": { "text": "finish.md" }
+  },
+  "backend": { "imageid": "kubernetes-kubeadm-1node" }
+}

@@ -18,9 +18,10 @@ Usage:
   costctl nodes                 per-node requested/allocatable % and $/mo
   costctl waste                 total paid-but-not-requested $/mo (+ --daemonsets)
   costctl workloads [-n NS]     requests-based $/mo per owner (Deployment/STS/DS)
+  costctl namespaces            $/mo per namespace + age; flags stale (--stale-days)
   costctl report --window 24h   Job cost over a window (by completionTime)
 Add --json for machine output. Feeds cluster state from kubectl, or from
---nodes/--pods/--jobs FILE (JSON) for tests / pre-seeded fixtures.
+--nodes/--pods/--jobs/--namespaces FILE (JSON) for tests / pre-seeded fixtures.
 """
 import argparse, json, os, subprocess, sys
 from datetime import datetime, timezone, timedelta
@@ -144,6 +145,24 @@ def pct(a, b):
     return (100.0 * a / b) if b else 0.0
 
 
+def parse_ts(v):  # ISO date or timestamp -> aware datetime (UTC), or None
+    if not v:
+        return None
+    v = str(v)
+    try:
+        if len(v) == 10:  # date-only, e.g. 2026-03-15
+            return datetime.fromisoformat(v).replace(tzinfo=timezone.utc)
+        return datetime.fromisoformat(v.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+# Namespaces you never reclaim — cluster infra. Anything starting "kube-" is also
+# treated as protected. Everything else is a candidate if it's stale + has cost.
+PROTECTED_NS = {"kube-system", "kube-public", "kube-node-lease", "default",
+                "local-path-storage", "kube-flannel"}
+
+
 # ---- commands ----------------------------------------------------------------
 
 def cmd_nodes(pricing, nodes, pods, args):
@@ -240,6 +259,77 @@ def cmd_workloads(pricing, nodes, pods, args):
               f"{r['cpu_cores']:>6} {r['mem_gib']:>8} {money(r['monthly_usd']):>9}")
 
 
+def cmd_namespaces(pricing, nodes, pods, namespaces, args):
+    """Requests-based $/mo grouped by namespace, with age + a staleness flag.
+
+    The zombie signal available in a requests-only view is AGE: a namespace still
+    running pods whose last deploy was N+ days ago is very likely abandoned. We read
+    `metrixforge.io/last-deploy` (fallback: the namespace creationTimestamp). Real
+    MetrixForge confirms with actual idle CPU/network metrics before recommending a
+    delete — age alone is the lab's proxy, not proof.
+    """
+    idx = build_nodes(pricing, nodes, pods)
+    # cluster-average rates for pods on unpriced/unknown nodes (mirror cmd_workloads)
+    tc = sum(n["cost"] for n in idx.values())
+    ca = sum(n["cpu_a"] for n in idx.values()) or 1
+    ma = sum(n["mem_a"] for n in idx.values()) or 1
+    split = pricing.get("cpu_split", 0.75)
+    avg_cpu, avg_mem = tc * split / ca, tc * (1 - split) / ma
+
+    cost, podn = {}, {}
+    for pod in pods:
+        ns = pod["metadata"].get("namespace", "default")
+        c, m = pod_requests(pod)
+        node = pod.get("spec", {}).get("nodeName")
+        dollars = (c * idx[node]["cpu_rate"] + m * idx[node]["mem_rate"]) if node in idx \
+            else (c * avg_cpu + m * avg_mem)
+        cost[ns] = cost.get(ns, 0.0) + dollars
+        podn[ns] = podn.get(ns, 0) + 1
+
+    now = datetime.now(timezone.utc)
+    age, dated = {}, {}
+    for ns in namespaces:
+        md = ns.get("metadata", {})
+        ann = md.get("annotations", {}) or {}
+        deploy = parse_ts(ann.get("metrixforge.io/last-deploy"))
+        disp = deploy or parse_ts(md.get("creationTimestamp"))
+        name = md.get("name")
+        age[name] = (now - disp).days if disp else None
+        # staleness is asserted ONLY from an explicit last-deploy signal — never from
+        # namespace creation age. Otherwise long-lived-but-ACTIVE infra on a real
+        # cluster (cert-manager, istio-system, monitoring, an old prod ns) would be
+        # flagged reclaimable and nudge someone toward deleting a live namespace.
+        dated[name] = deploy is not None
+
+    rows, reclaim, stale_list = [], 0.0, []
+    for ns in sorted(cost, key=lambda k: cost[k], reverse=True):
+        a = age.get(ns)
+        protected = ns in PROTECTED_NS or ns.startswith("kube-")
+        stale = bool(args.stale_days > 0 and not protected and dated.get(ns)
+                     and a is not None and a >= args.stale_days and cost[ns] > 0)
+        if stale:
+            reclaim += cost[ns]
+            stale_list.append(ns)
+        rows.append({"namespace": ns, "pods": podn.get(ns, 0), "age_days": a,
+                     "monthly_usd": round(cost[ns], 2), "stale": stale})
+
+    if args.json:
+        print(json.dumps({"namespaces": rows, "stale_days": args.stale_days,
+                          "stale_namespaces": stale_list,
+                          "reclaimable_monthly_usd": round(reclaim, 2)}, indent=2))
+        return
+    print(f"{'NAMESPACE':<22} {'PODS':>4} {'AGE(d)':>7} {'$/MO':>9}")
+    for r in rows:
+        ad = "?" if r["age_days"] is None else r["age_days"]
+        flag = "  ⚠ stale" if r["stale"] else ""
+        print(f"{r['namespace']:<22} {r['pods']:>4} {str(ad):>7} {money(r['monthly_usd']):>9}{flag}")
+    if args.stale_days > 0:
+        print(f"{'—'*22} {'—'*4} {'—'*7} {'—'*9}")
+        print(f"Reclaimable from {len(stale_list)} stale namespace(s) "
+              f"(>{args.stale_days}d since last deploy, still running pods): {money(reclaim)}/mo")
+        print("(age is a proxy — confirm a namespace is really idle before deleting it)")
+
+
 def cmd_report(pricing, nodes, pods, jobs, args):
     """Cost of completed Jobs within a trailing window (by completionTime)."""
     hpm = pricing.get("hours_per_month", 730)
@@ -302,7 +392,7 @@ def parse_window(w):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="costctl", description=__doc__.split("\n")[0])
     ap.add_argument("--pricing"); ap.add_argument("--nodes"); ap.add_argument("--pods")
-    ap.add_argument("--jobs")
+    ap.add_argument("--jobs"); ap.add_argument("--namespaces")
     # --json goes AFTER the subcommand (costctl nodes --json). On the subparsers
     # only — defining it on main too lets the subparser default clobber it.
     common = argparse.ArgumentParser(add_help=False)
@@ -311,6 +401,8 @@ def main(argv=None):
     sub.add_parser("nodes", parents=[common])
     w = sub.add_parser("waste", parents=[common]); w.add_argument("--daemonsets", action="store_true")
     wl = sub.add_parser("workloads", parents=[common]); wl.add_argument("-n", "--namespace")
+    ns = sub.add_parser("namespaces", parents=[common])
+    ns.add_argument("--stale-days", type=int, default=90)
     rp = sub.add_parser("report", parents=[common]); rp.add_argument("--window", default="24h")
     a = ap.parse_args(argv)
 
@@ -323,6 +415,8 @@ def main(argv=None):
         cmd_waste(pricing, nodes, pods, a)
     elif a.cmd == "workloads":
         cmd_workloads(pricing, nodes, pods, a)
+    elif a.cmd == "namespaces":
+        cmd_namespaces(pricing, nodes, pods, get_items("namespaces", a.namespaces), a)
     elif a.cmd == "report":
         jobs = get_items("jobs", a.jobs)
         cmd_report(pricing, nodes, pods, jobs, a)

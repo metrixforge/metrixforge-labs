@@ -1,0 +1,32 @@
+{
+  "items": [
+    { "metadata": { "name": "web-a", "namespace": "shop",
+        "ownerReferences": [{ "kind": "ReplicaSet", "name": "web-5d8f" }] },
+      "spec": { "nodeName": "node-a", "containers": [
+        { "name": "app", "resources": { "requests": { "cpu": "1", "memory": "1Gi" } } } ] } },
+    { "metadata": { "name": "web-b", "namespace": "shop",
+        "ownerReferences": [{ "kind": "ReplicaSet", "name": "web-5d8f" }] },
+      "spec": { "nodeName": "node-a", "containers": [
+        { "name": "app", "resources": { "requests": { "cpu": "1", "memory": "1Gi" } } } ] } },
+    { "metadata": { "name": "prev-a", "namespace": "preview-pr-1",
+        "ownerReferences": [{ "kind": "ReplicaSet", "name": "web-99aa" }] },
+      "spec": { "nodeName": "node-a", "containers": [
+        { "name": "app", "resources": { "requests": { "cpu": "1", "memory": "2Gi" } } } ] } },
+    { "metadata": { "name": "prev-b", "namespace": "preview-pr-1",
+        "ownerReferences": [{ "kind": "ReplicaSet", "name": "web-99aa" }] },
+      "spec": { "nodeName": "node-a", "containers": [
+        { "name": "app", "resources": { "requests": { "cpu": "1", "memory": "2Gi" } } } ] } },
+    { "metadata": { "name": "demo-a", "namespace": "demo-old",
+        "ownerReferences": [{ "kind": "ReplicaSet", "name": "app-11bb" }] },
+      "spec": { "nodeName": "node-a", "containers": [
+        { "name": "app", "resources": { "requests": { "cpu": "2", "memory": "2Gi" } } } ] } },
+    { "metadata": { "name": "coredns-x", "namespace": "kube-system",
+        "ownerReferences": [{ "kind": "ReplicaSet", "name": "coredns-abc" }] },
+      "spec": { "nodeName": "node-a", "containers": [
+        { "name": "coredns", "resources": { "requests": { "cpu": "100m", "memory": "128Mi" } } } ] } },
+    { "metadata": { "name": "cert-a", "namespace": "legacy-infra",
+        "ownerReferences": [{ "kind": "ReplicaSet", "name": "cert-mgr-xyz" }] },
+      "spec": { "nodeName": "node-a", "containers": [
+        { "name": "ctrl", "resources": { "requests": { "cpu": "500m", "memory": "512Mi" } } } ] } }
+  ]
+}
