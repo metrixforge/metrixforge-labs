@@ -10,12 +10,7 @@
       { "title": "Right-size the requests", "text": "step2.md", "verify": "verify/step2.sh" },
       { "title": "Consolidate & prove it", "text": "step3.md", "verify": "verify/step3.sh" }
     ],
-    "finish": { "text": "finish.md" },
-    "assets": {
-      "host01": [
-        { "file": "assets/*", "target": "/opt/lab", "chmod": "+x" }
-      ]
-    }
+    "finish": { "text": "finish.md" }
   },
   "backend": { "imageid": "kubernetes-kubeadm-1node" }
 }

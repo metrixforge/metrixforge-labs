@@ -16,10 +16,14 @@ get() { # get <repo-relpath> <dest>
   else curl -fsSL "$RAW/$1" -o "$2"; fi
 }
 
-echo "== fetch tools =="
+echo "== fetch tools + scenario scripts =="
+# Killercoda copies ONLY background.sh into the env (not sibling files), so fetch
+# everything this setup needs — shared tools AND the scenario's own scripts.
 get tools/costctl      "$LAB/costctl"
 get tools/pricing.json "$LAB/pricing.json"
 for f in install-kwok.sh gen-nodes.sh wait-setup.sh versions.env; do get "common/$f" "$LAB/$f"; done
+get scenarios/binpacking-disaster/setup/seed-leak.sh    "$LAB/seed-leak.sh"
+get scenarios/binpacking-disaster/assets/consolidate.sh "$LAB/consolidate.sh"
 chmod +x "$LAB/costctl" "$LAB"/*.sh
 # put costctl + wait-setup on PATH (root on Killercoda; best-effort under local e2e)
 install -m 0755 "$LAB/costctl" /usr/local/bin/costctl 2>/dev/null || true
@@ -30,7 +34,7 @@ echo "== install kwok =="
 bash "$LAB/install-kwok.sh"          # sources $LAB/versions.env
 
 echo "== seed leak =="
-COMMON_DIR="$LAB" bash "$SCENARIO_DIR/setup/seed-leak.sh"   # uses $LAB/gen-nodes.sh
+COMMON_DIR="$LAB" bash "$LAB/seed-leak.sh"   # uses $LAB/gen-nodes.sh
 
 echo "== wait for checkout to schedule onto the fleet =="
 kubectl -n shop rollout status deploy/checkout --timeout=120s || true
