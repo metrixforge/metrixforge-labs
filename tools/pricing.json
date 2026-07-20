@@ -1,0 +1,15 @@
+{
+  "_comment": "Synthetic pricing, roughly us-east-1 on-demand. Deterministic — NOT real AWS billing. 'hourly'/'spot' = full node $/hr; 'cpu'/'mem_gb'/'gpu' = capacity (used to generate kwok nodes). Node cost is split into a CPU pool and a memory pool by cpu_split (OpenCost-style) for per-workload attribution.",
+  "hours_per_month": 730,
+  "cpu_split": 0.75,
+  "storage": { "gp3_gb_month": 0.08, "gp2_gb_month": 0.10 },
+  "instances": {
+    "m5.large":    { "cpu": 2,  "mem_gb": 8,   "hourly": 0.096, "spot": 0.0317 },
+    "m5.xlarge":   { "cpu": 4,  "mem_gb": 16,  "hourly": 0.192, "spot": 0.0634 },
+    "m5.2xlarge":  { "cpu": 8,  "mem_gb": 32,  "hourly": 0.384, "spot": 0.1267 },
+    "m5.4xlarge":  { "cpu": 16, "mem_gb": 64,  "hourly": 0.768, "spot": 0.2534 },
+    "c5.2xlarge":  { "cpu": 8,  "mem_gb": 16,  "hourly": 0.340, "spot": 0.1122 },
+    "r5.2xlarge":  { "cpu": 8,  "mem_gb": 64,  "hourly": 0.504, "spot": 0.1663 },
+    "g4dn.2xlarge":{ "cpu": 8,  "mem_gb": 32,  "gpu": 1, "hourly": 0.752, "spot": 0.2256 }
+  }
+}

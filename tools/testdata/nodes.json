@@ -1,0 +1,16 @@
+{
+  "items": [
+    {
+      "metadata": { "name": "node-a", "labels": {
+        "node.kubernetes.io/instance-type": "m5.2xlarge",
+        "karpenter.sh/capacity-type": "on-demand" } },
+      "status": { "allocatable": { "cpu": "8", "memory": "32Gi", "pods": "110" } }
+    },
+    {
+      "metadata": { "name": "node-b", "labels": {
+        "node.kubernetes.io/instance-type": "m5.2xlarge",
+        "karpenter.sh/capacity-type": "spot" } },
+      "status": { "allocatable": { "cpu": "8", "memory": "32Gi", "pods": "110" } }
+    }
+  ]
+}

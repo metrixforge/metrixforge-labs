@@ -1,0 +1,323 @@
+#!/usr/bin/env python3
+"""costctl — a tiny, deterministic Kubernetes cost lens for MetrixForge Labs.
+
+A simplified version of what OpenCost / MetrixForge do continuously: it reads
+node instance-type pricing (pricing.json) + the cluster's requests/capacity and
+reports what you PAY vs what you REQUEST. No cloud API, no billing creds, instant.
+
+Cost model (OpenCost-style, internally consistent per node):
+  node $/mo         = instance hourly (spot rate if capacity-type=spot) x hours/mo
+  node CPU pool     = node $/mo x cpu_split      (split into cpu + memory pools)
+  node MEM pool     = node $/mo x (1 - cpu_split)
+  cpu_rate ($/core) = CPU pool / allocatable cpu ;  mem_rate ($/GiB) = MEM pool / allocatable mem
+  workload $/mo     = sum(container requests) x that node's rates
+  waste $/mo        = node $/mo - sum(scheduled requests $)      (idle capacity you pay for)
+So  sum(workload $) + sum(waste $) == sum(node $).
+
+Usage:
+  costctl nodes                 per-node requested/allocatable % and $/mo
+  costctl waste                 total paid-but-not-requested $/mo (+ --daemonsets)
+  costctl workloads [-n NS]     requests-based $/mo per owner (Deployment/STS/DS)
+  costctl report --window 24h   Job cost over a window (by completionTime)
+Add --json for machine output. Feeds cluster state from kubectl, or from
+--nodes/--pods/--jobs FILE (JSON) for tests / pre-seeded fixtures.
+"""
+import argparse, json, os, subprocess, sys
+from datetime import datetime, timezone, timedelta
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def load_pricing(path):
+    with open(path or os.path.join(HERE, "pricing.json")) as f:
+        return json.load(f)
+
+
+def kubectl_json(args):
+    out = subprocess.run(["kubectl", "get", *args, "-o", "json"],
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        sys.exit("kubectl failed: " + out.stderr.strip())
+    return json.loads(out.stdout)
+
+
+def get_items(kind, file):
+    if file:
+        with open(file) as f:
+            d = json.load(f)
+        return d.get("items", d if isinstance(d, list) else [d])
+    return kubectl_json([kind, "-A"] if kind in ("pods", "jobs") else [kind])["items"]
+
+
+def parse_cpu(v):  # -> cores
+    if v is None:
+        return 0.0
+    v = str(v)
+    if v.endswith("m"):
+        return float(v[:-1]) / 1000.0
+    if v.endswith("n"):
+        return float(v[:-1]) / 1e9
+    if v.endswith("u"):
+        return float(v[:-1]) / 1e6
+    return float(v)
+
+
+_MEM = {"Ki": 1024, "Mi": 1024**2, "Gi": 1024**3, "Ti": 1024**4,
+        "K": 1e3, "M": 1e6, "G": 1e9, "T": 1e12,
+        "k": 1e3, "m": 1e-3}  # 'm' (milli-bytes) appears rarely
+
+
+def parse_mem_gib(v):  # -> GiB (1024^3)
+    if v is None:
+        return 0.0
+    v = str(v)
+    for suf, mult in _MEM.items():
+        if v.endswith(suf):
+            return (float(v[: -len(suf)]) * mult) / (1024**3)
+    return float(v) / (1024**3)
+
+
+def pod_requests(pod):
+    cpu = mem = 0.0
+    for c in (pod.get("spec", {}).get("containers", []) or []):
+        r = (c.get("resources", {}) or {}).get("requests", {}) or {}
+        cpu += parse_cpu(r.get("cpu"))
+        mem += parse_mem_gib(r.get("memory"))
+    return cpu, mem
+
+
+def owner_of(pod):
+    """Workload owner: strip ReplicaSet hash to the Deployment, keep STS/DS/Job."""
+    refs = pod.get("metadata", {}).get("ownerReferences", []) or []
+    ns = pod["metadata"].get("namespace", "default")
+    if not refs:
+        return ns, pod["metadata"].get("name", "?"), "Pod"
+    ref = refs[0]
+    kind, name = ref.get("kind", "?"), ref.get("name", "?")
+    if kind == "ReplicaSet":
+        # rs name = <deploy>-<hash>; strip the last segment
+        i = name.rfind("-")
+        return ns, (name[:i] if i > 0 else name), "Deployment"
+    return ns, name, kind
+
+
+def build_nodes(pricing, nodes, pods):
+    hpm = pricing.get("hours_per_month", 730)
+    split = pricing.get("cpu_split", 0.75)
+    inst = pricing.get("instances", {})
+    idx = {}
+    for n in nodes:
+        lbl = n["metadata"].get("labels", {}) or {}
+        name = n["metadata"]["name"]
+        itype = lbl.get("node.kubernetes.io/instance-type") or lbl.get(
+            "beta.kubernetes.io/instance-type") or "unknown"
+        captype = lbl.get("karpenter.sh/capacity-type", "on-demand")
+        alloc = n.get("status", {}).get("allocatable", {}) or n.get("status", {}).get("capacity", {})
+        cpu_a = parse_cpu(alloc.get("cpu"))
+        mem_a = parse_mem_gib(alloc.get("memory"))
+        gpu_a = float(alloc.get("nvidia.com/gpu", 0) or 0)
+        p = inst.get(itype, {})
+        hourly = p.get("spot") if captype == "spot" and "spot" in p else p.get("hourly", 0.0)
+        cost = hourly * hpm
+        idx[name] = {
+            "type": itype, "captype": captype, "cost": cost,
+            "cpu_a": cpu_a, "mem_a": mem_a, "gpu_a": gpu_a,
+            "cpu_r": 0.0, "mem_r": 0.0,
+            "cpu_rate": (cost * split / cpu_a) if cpu_a else 0.0,
+            "mem_rate": (cost * (1 - split) / mem_a) if mem_a else 0.0,
+            "known": itype in inst,
+        }
+    for pod in pods:
+        node = pod.get("spec", {}).get("nodeName")
+        if node and node in idx:
+            cpu, mem = pod_requests(pod)
+            idx[node]["cpu_r"] += cpu
+            idx[node]["mem_r"] += mem
+    return idx
+
+
+def money(x):
+    return "$" + format(int(round(x)), ",")
+
+
+def pct(a, b):
+    return (100.0 * a / b) if b else 0.0
+
+
+# ---- commands ----------------------------------------------------------------
+
+def cmd_nodes(pricing, nodes, pods, args):
+    idx = build_nodes(pricing, nodes, pods)
+    rows, tot = [], {"cost": 0.0}
+    for name, n in sorted(idx.items()):
+        rows.append({"node": name, "type": n["type"], "capacity_type": n["captype"],
+                     "cpu_pct": round(pct(n["cpu_r"], n["cpu_a"]), 1),
+                     "mem_pct": round(pct(n["mem_r"], n["mem_a"]), 1),
+                     "monthly_usd": round(n["cost"], 2)})
+        tot["cost"] += n["cost"]
+    if args.json:
+        print(json.dumps({"nodes": rows, "total_monthly_usd": round(tot["cost"], 2),
+                          "node_count": len(rows)}, indent=2))
+        return
+    print(f"{'NODE':<28} {'TYPE':<13} {'CAP':<10} {'CPU%':>6} {'MEM%':>6} {'$/MO':>9}")
+    for r in rows:
+        print(f"{r['node']:<28} {r['type']:<13} {r['capacity_type']:<10} "
+              f"{r['cpu_pct']:>6} {r['mem_pct']:>6} {money(r['monthly_usd']):>9}")
+    print(f"{'—'*28} {'—'*13} {'—'*10} {'—'*6} {'—'*6} {'—'*9}")
+    print(f"{len(rows)} nodes{'':<52}{money(tot['cost']):>9}/mo")
+
+
+def cmd_waste(pricing, nodes, pods, args):
+    idx = build_nodes(pricing, nodes, pods)
+    total_waste = ds_waste = 0.0
+    for n in idx.values():
+        req_cost = n["cpu_r"] * n["cpu_rate"] + n["mem_r"] * n["mem_rate"]
+        total_waste += max(n["cost"] - req_cost, 0.0)
+    if args.daemonsets:
+        for pod in pods:
+            _, _, kind = owner_of(pod)
+            node = pod.get("spec", {}).get("nodeName")
+            if kind == "DaemonSet" and node in idx:
+                cpu, mem = pod_requests(pod)
+                ds_waste += cpu * idx[node]["cpu_rate"] + mem * idx[node]["mem_rate"]
+    total_cost = sum(n["cost"] for n in idx.values())
+    out = {"waste_monthly_usd": round(total_waste, 2),
+           "total_monthly_usd": round(total_cost, 2),
+           "waste_pct": round(pct(total_waste, total_cost), 1)}
+    if args.daemonsets:
+        out["daemonset_monthly_usd"] = round(ds_waste, 2)
+    if args.json:
+        print(json.dumps(out, indent=2))
+        return
+    print(f"Paid-but-not-requested (idle): {money(total_waste)}/mo "
+          f"({out['waste_pct']}% of {money(total_cost)}/mo total)")
+    if args.daemonsets:
+        print(f"DaemonSet 'fleet tax':         {money(ds_waste)}/mo")
+
+
+def cmd_workloads(pricing, nodes, pods, args):
+    idx = build_nodes(pricing, nodes, pods)
+    # cluster-average rates for unscheduled (Pending) pods
+    tc = sum(n["cost"] for n in idx.values())
+    ca = sum(n["cpu_a"] for n in idx.values()) or 1
+    ma = sum(n["mem_a"] for n in idx.values()) or 1
+    split = pricing.get("cpu_split", 0.75)
+    avg_cpu, avg_mem = tc * split / ca, tc * (1 - split) / ma
+    agg = {}
+    for pod in pods:
+        ns, name, kind = owner_of(pod)
+        if args.namespace and ns != args.namespace:
+            continue
+        cpu, mem = pod_requests(pod)
+        node = pod.get("spec", {}).get("nodeName")
+        if node in idx:
+            cost = cpu * idx[node]["cpu_rate"] + mem * idx[node]["mem_rate"]
+        else:
+            cost = cpu * avg_cpu + mem * avg_mem
+        k = (ns, kind, name)
+        a = agg.setdefault(k, {"cpu": 0.0, "mem": 0.0, "cost": 0.0, "pods": 0})
+        a["cpu"] += cpu; a["mem"] += mem; a["cost"] += cost; a["pods"] += 1
+    rows = [{"namespace": ns, "kind": kind, "name": name,
+             "cpu_cores": round(v["cpu"], 2), "mem_gib": round(v["mem"], 2),
+             "pods": v["pods"], "monthly_usd": round(v["cost"], 2)}
+            for (ns, kind, name), v in agg.items()]
+    rows.sort(key=lambda r: r["monthly_usd"], reverse=True)
+    if args.json:
+        print(json.dumps({"workloads": rows}, indent=2))
+        return
+    print(f"{'NAMESPACE':<20} {'KIND':<11} {'NAME':<26} {'CPU':>6} {'MEM(Gi)':>8} {'$/MO':>9}")
+    for r in rows:
+        print(f"{r['namespace']:<20} {r['kind']:<11} {r['name']:<26} "
+              f"{r['cpu_cores']:>6} {r['mem_gib']:>8} {money(r['monthly_usd']):>9}")
+
+
+def cmd_report(pricing, nodes, pods, jobs, args):
+    """Cost of completed Jobs within a trailing window (by completionTime)."""
+    hpm = pricing.get("hours_per_month", 730)
+    split = pricing.get("cpu_split", 0.75)
+    idx = build_nodes(pricing, nodes, pods)
+    tc = sum(n["cost"] for n in idx.values())
+    ca = sum(n["cpu_a"] for n in idx.values()) or 1
+    ma = sum(n["mem_a"] for n in idx.values()) or 1
+    # per-HOUR rates (cost / hours_per_month), for duration-based job costing
+    cpu_hr = (tc * split / ca) / hpm
+    mem_hr = (tc * (1 - split) / ma) / hpm
+    win = parse_window(args.window)
+    now = datetime.now(timezone.utc)
+    buckets = {}
+    for j in jobs:
+        st = j.get("status", {})
+        ct = st.get("completionTime")
+        if not ct:
+            continue
+        end = datetime.fromisoformat(ct.replace("Z", "+00:00"))
+        if now - end > win:
+            continue
+        start = st.get("startTime", ct)
+        beg = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        hours = max((end - beg).total_seconds() / 3600.0, 1 / 60.0)
+        tmpl = j.get("spec", {}).get("template", {})
+        cpu = sum(parse_cpu((c.get("resources", {}).get("requests", {}) or {}).get("cpu"))
+                  for c in tmpl.get("spec", {}).get("containers", []) or [])
+        mem = sum(parse_mem_gib((c.get("resources", {}).get("requests", {}) or {}).get("memory"))
+                  for c in tmpl.get("spec", {}).get("containers", []) or [])
+        cost = (cpu * cpu_hr + mem * mem_hr) * hours
+        hour_key = end.replace(minute=0, second=0, microsecond=0).isoformat()
+        b = buckets.setdefault(hour_key, {"jobs": 0, "cost": 0.0})
+        b["jobs"] += 1; b["cost"] += cost
+    total = sum(b["cost"] for b in buckets.values())
+    njobs = sum(b["jobs"] for b in buckets.values())
+    if args.json:
+        print(json.dumps({"window": args.window, "total_usd": round(total, 2),
+                          "job_runs": njobs,
+                          "hourly": [{"hour": k, **v} for k, v in sorted(buckets.items())]},
+                         indent=2))
+        return
+    print(f"Job cost over {args.window}: {money(total)} across {njobs} runs")
+    for k, v in sorted(buckets.items()):
+        bar = "#" * min(int(v["cost"] / max(total, 1) * 60), 60)
+        print(f"  {k[11:16]}  {v['jobs']:>3} runs  {money(v['cost']):>7}  {bar}")
+
+
+def parse_window(w):
+    w = w.strip().lower()
+    if w.endswith("h"):
+        return timedelta(hours=float(w[:-1]))
+    if w.endswith("d"):
+        return timedelta(days=float(w[:-1]))
+    if w.endswith("m"):
+        return timedelta(minutes=float(w[:-1]))
+    return timedelta(hours=float(w))
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="costctl", description=__doc__.split("\n")[0])
+    ap.add_argument("--pricing"); ap.add_argument("--nodes"); ap.add_argument("--pods")
+    ap.add_argument("--jobs")
+    # --json goes AFTER the subcommand (costctl nodes --json). On the subparsers
+    # only — defining it on main too lets the subparser default clobber it.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--json", action="store_true")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("nodes", parents=[common])
+    w = sub.add_parser("waste", parents=[common]); w.add_argument("--daemonsets", action="store_true")
+    wl = sub.add_parser("workloads", parents=[common]); wl.add_argument("-n", "--namespace")
+    rp = sub.add_parser("report", parents=[common]); rp.add_argument("--window", default="24h")
+    a = ap.parse_args(argv)
+
+    pricing = load_pricing(a.pricing)
+    nodes = get_items("nodes", a.nodes)
+    pods = get_items("pods", a.pods)
+    if a.cmd == "nodes":
+        cmd_nodes(pricing, nodes, pods, a)
+    elif a.cmd == "waste":
+        cmd_waste(pricing, nodes, pods, a)
+    elif a.cmd == "workloads":
+        cmd_workloads(pricing, nodes, pods, a)
+    elif a.cmd == "report":
+        jobs = get_items("jobs", a.jobs)
+        cmd_report(pricing, nodes, pods, jobs, a)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,6 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+# Single node — kind leaves the control-plane schedulable, so kwok-controller +
+# kube-system run here; the lab's fake fleet is added by kwok.
+nodes:
+  - role: control-plane

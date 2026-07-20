@@ -1,0 +1,34 @@
+{
+  "items": [
+    {
+      "metadata": { "name": "web-5d8f-aaa", "namespace": "shop",
+        "ownerReferences": [{ "kind": "ReplicaSet", "name": "web-5d8f" }] },
+      "spec": { "nodeName": "node-a", "containers": [
+        { "name": "app", "resources": { "requests": { "cpu": "2", "memory": "4Gi" } } } ] }
+    },
+    {
+      "metadata": { "name": "web-5d8f-bbb", "namespace": "shop",
+        "ownerReferences": [{ "kind": "ReplicaSet", "name": "web-5d8f" }] },
+      "spec": { "nodeName": "node-a", "containers": [
+        { "name": "app", "resources": { "requests": { "cpu": "2", "memory": "4Gi" } } } ] }
+    },
+    {
+      "metadata": { "name": "api-77cd-ccc", "namespace": "shop",
+        "ownerReferences": [{ "kind": "ReplicaSet", "name": "api-77cd" }] },
+      "spec": { "nodeName": "node-b", "containers": [
+        { "name": "api", "resources": { "requests": { "cpu": "1", "memory": "2Gi" } } } ] }
+    },
+    {
+      "metadata": { "name": "logshipper-ddd", "namespace": "kube-system",
+        "ownerReferences": [{ "kind": "DaemonSet", "name": "logshipper" }] },
+      "spec": { "nodeName": "node-a", "containers": [
+        { "name": "ship", "resources": { "requests": { "cpu": "0.5", "memory": "512Mi" } } } ] }
+    },
+    {
+      "metadata": { "name": "logshipper-eee", "namespace": "kube-system",
+        "ownerReferences": [{ "kind": "DaemonSet", "name": "logshipper" }] },
+      "spec": { "nodeName": "node-b", "containers": [
+        { "name": "ship", "resources": { "requests": { "cpu": "0.5", "memory": "512Mi" } } } ] }
+    }
+  ]
+}

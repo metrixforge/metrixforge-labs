@@ -1,0 +1,21 @@
+{
+  "title": "12 Nodes Doing the Work of 7: A Bin-Packing Post-Mortem",
+  "description": "A 12-node cluster is burning ~$3,400/mo to run work that fits on 7. Find the fragmentation, right-size it, prove the savings.",
+  "difficulty": "Intermediate",
+  "time": "20 minutes",
+  "details": {
+    "intro": { "text": "intro.md", "background": "setup/background.sh" },
+    "steps": [
+      { "title": "Read the bill", "text": "step1.md", "verify": "verify/step1.sh" },
+      { "title": "Right-size the requests", "text": "step2.md", "verify": "verify/step2.sh" },
+      { "title": "Consolidate & prove it", "text": "step3.md", "verify": "verify/step3.sh" }
+    ],
+    "finish": { "text": "finish.md" },
+    "assets": {
+      "host01": [
+        { "file": "assets/*", "target": "/opt/lab", "chmod": "+x" }
+      ]
+    }
+  },
+  "backend": { "imageid": "kubernetes-kubeadm-1node" }
+}
